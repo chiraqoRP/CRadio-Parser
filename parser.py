@@ -41,19 +41,19 @@ def DoCatboxUpload(file, path, userHash):
     except:
         return response, None
 
-def DoPomfUpload(file):
+def DoPomfUpload(file, path, userHash):
     # -----------------------------426483243616972780734144962905
     # Content-Disposition: form-data; name="files[]"; filename="rain_temple.png"
     # Content-Type: image/png
 
     files = {
-        "files[]": (file, file.read())
+        "files[]": (path, file.read())
     }
 
     response = requests.post("https://pomf.lain.la/upload.php", files=files)
 
     try:
-        return response, response.json().files[0].url
+        return response, response.json()["files"][0]["url"]
     except:
         return response, None
 
@@ -63,13 +63,13 @@ def DoQuaxUpload(file, path, userHash):
     # Content-Type: image/png
 
     files = {
-        "files[]": (file, file.read())
+        "files[]": (path, file.read())
     }
 
     response = requests.post("https://qu.ax/upload.php", files=files)
 
     try:
-        return response, response.json().files[0].url
+        return response, response.json()["files"][0]["url"]
     except:
         return response, None
 
@@ -86,7 +86,7 @@ def DoMonofileUpload(file, path, userHash):
     }
 
     files = {
-        "file": (file, file.read())
+        "file": (path, file.read())
     }
 
     response = requests.post("https://fyle.uk/upload", files=files, headers=headers)
@@ -100,8 +100,6 @@ uploaderFuncs = [DoCatboxUpload, DoPomfUpload, DoQuaxUpload, DoMonofileUpload]
 
 ## MiBs
 uploaderLimits = [200000000, 1000000000, 100000000, 754974700]
-hostIndex = None
-userHash = ""
 
 def DoFileUpload(path):
     try:
@@ -145,8 +143,8 @@ def GetFileTags(file):
 
         ## COMMENT
         for image in mFile.images:
-            print(image.type)
-            print(image.type == ImageType.front)
+            ## print(image.type)
+            ## print(image.type == ImageType.front)
 
             if image.type != ImageType.front:
                 continue
@@ -157,8 +155,8 @@ def GetFileTags(file):
             folderPath = os.path.join("covers", "materials", "cradio", "covers")
             coverPath = os.path.join(folderPath, coverName + ".png")
 
-            print("coverName: ", coverName)
-            print("coverPath: ", coverPath)
+            ## print("coverName: ", coverName)
+            ## print("coverPath: ", coverPath)
 
             ## COMMENT
             sCoverName = coverName + ".png"
@@ -176,7 +174,7 @@ def GetFileTags(file):
 
             break
 
-        print("sCoverName: ", sCoverName)
+        ## print("sCoverName: ", sCoverName)
 
         ## Returns a list for some fucking reason
         return mFile.title, mFile.artist, mFile.album, mFile.length, sCoverName, os.path.basename(file)
@@ -259,9 +257,6 @@ def GetMusicFiles(path, ignoreFolders=False):
             if isFolder and ignoreFolders:
                 continue
 
-            print(fileType)
-            print(isFolder)
-
             if not isFolder and fileType not in audioFileTypes:
                 continue
 
@@ -286,9 +281,6 @@ subPlaylistLine = "\n---------------------------------\n-- {0} (Playlist)\n-----
 subPlaylistFormat = 'local {0}Playlist = CRadio:SubPlaylist("{0}")\n'
 subParentFormat = '{0}Playlist:SetParent(station)\n\n'
 
-## COMMENT
-songsWritten = False
-
 def WriteSubplaylist(subPlaylist, stationFile, stationName):
     musicList, _ = GetMusicFiles(subPlaylist, True)
     subPlaylistName = os.path.basename(subPlaylist)
@@ -305,7 +297,7 @@ def WriteSubplaylist(subPlaylist, stationFile, stationName):
 
     for song in musicList:
         ## print("subSong: ", song)
-        successful = WriteSong(song, stationFile, stationName, songsWritten, parentName)
+        successful = WriteSong(song, stationFile, stationName, currentIteration == 0, parentName)
 
         if currentIteration != songCount - 1:
             stationFile.write("\n")
@@ -335,13 +327,13 @@ def WriteStation(fileList, playlistList, name="DefaultName"):
     currentIteration = 0
 
     for song in fileList:
-        WriteSong(song, stationFile, name, currentIteration == 0)
+        successful = WriteSong(song, stationFile, name, currentIteration == 0)
 
         if currentIteration != songCount - 1:
             stationFile.write("\n")
 
-        currentIteration += 1
-        songsWritten = True
+        if successful:
+            currentIteration += 1
 
     for subPlaylist in playlistList:
         WriteSubplaylist(subPlaylist, stationFile, name)
@@ -364,6 +356,10 @@ def DoParse():
         WriteStation(musicList, playlistList, stationName)
 
 def AskForUserHash(authAccepted, authRequired):
+    # Declared as global because i'm tired of arg hell
+    global userHash
+    userHash = ""
+
     if authAccepted:
         print("---------------------------------")
 
@@ -385,8 +381,15 @@ def AskForUserHash(authAccepted, authRequired):
 
         ## COMMENT
         DoParse()
+    else:
+        ## COMMENT
+        DoParse()
 
 def AskForOptions():
+    # Declare hostIndex as global
+    global hostIndex
+    hostIndex = None
+
     print("---------------------------------")
     print("Do you want to upload these files onto a host?")
 
@@ -401,9 +404,7 @@ def AskForOptions():
         print("[4] - Monofile")
 
         ## Clamps between min and max host to prevent out of range index.
-        hostIndex = max(1, min(int(input()), 4))
-
-        ## print(uploadFunc)
+        hostIndex = max(1, min(int(input("(x): ")), 4))
 
         ## COMMENT
         authAccepted = hostIndex == 1 or hostIndex == 3

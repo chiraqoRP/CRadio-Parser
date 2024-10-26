@@ -5,6 +5,6 @@ Then, navigate to the parser.py's directory and drag the station lua scripts to 
 If you want covers too, drag the covers folder into your addons folder.
 
 ## Requirements
-[mediafile](https://pypi.org/project/mediafile/) <br />
+[tinytag](https://pypi.org/project/tinytag/) <br />
 [pillow](https://pypi.org/project/pillow/) <br />
 [requests](https://pypi.org/project/requests/) <br />

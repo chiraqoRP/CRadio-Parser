@@ -4,8 +4,8 @@ import io, os, sys, re
 # Requests
 import requests
 
-# MediaFile
-from mediafile import MediaFile, ImageType
+# Tinytag
+from tinytag import TinyTag
 
 # Pillow
 from PIL import Image
@@ -117,7 +117,7 @@ def DoFileUpload(path):
 
             ## print("before post")
 
-            ## COMMENT
+            ## Start uploading our file, this is not done with another thread so each file must be uploaded one-by-one.
             response, url = doUploadFunc(file, path, userHash)
 
             ## print("after post")
@@ -137,47 +137,38 @@ def GetFileTags(file):
     try:
         print(file)
 
-        mFile = MediaFile(file)
-
         sCoverName = None
 
-        ## COMMENT
-        for image in mFile.images:
-            ## print(image.type)
-            ## print(image.type == ImageType.front)
+        mFile = TinyTag.get(file, image=True)
+        image = mFile.get_image()
 
-            if image.type != ImageType.front:
-                continue
-
-            # print(frame.mime)
-
+        if image is not None:
+            ## Filters out dangerous characters before creating our path
             coverName = re.sub(r'[^\w]', '', mFile.artist + "_" + mFile.album).lower()
             folderPath = os.path.join("covers", "materials", "cradio", "covers")
             coverPath = os.path.join(folderPath, coverName + ".png")
 
-            ## print("coverName: ", coverName)
-            ## print("coverPath: ", coverPath)
-
-            ## COMMENT
+            ## If we have a cover we need to write the string to our lua file
             sCoverName = coverName + ".png"
 
+            ## If a cover has already been saved for this song, just reuse it.
             if os.path.isfile(coverPath):
-                break
+                return mFile.title, mFile.artist, mFile.album, mFile.duration, sCoverName, os.path.basename(file)
 
+            ## Write our folder for covers if it doesn't exist
             if not os.path.exists(folderPath):
-                os.makedirs(folderPath) 
+                os.makedirs(folderPath)
 
-            imageBytes = io.BytesIO(image.data)
+            ## We have to open the image as bytes
+            imageBytes = io.BytesIO(image)
+
             coverImage = Image.open(imageBytes)
+
+            ## Lanczos is the best algorithm for downscaling images, gmod's in-engine solution is terrible
             coverImage.thumbnail(maxSize, Image.Resampling.LANCZOS)
             coverImage.save(coverPath, "PNG")
 
-            break
-
-        ## print("sCoverName: ", sCoverName)
-
-        ## Returns a list for some fucking reason
-        return mFile.title, mFile.artist, mFile.album, mFile.length, sCoverName, os.path.basename(file)
+        return mFile.title, mFile.artist, mFile.album, mFile.duration, sCoverName, os.path.basename(file)
     except TypeError:
        print("Missing ID3 tags in ", file, ", skipping it.")
 
@@ -250,10 +241,7 @@ def GetMusicFiles(path, ignoreFolders=False):
             _, fileType = os.path.splitext(fileName)
             isFolder = os.path.exists(os.path.dirname(fileName))
 
-            ## print("hasDot", fileName[-4])
-
-            ## print("fileType", fileType)
-
+            ## This is used for when we don't want to include sub-playlists.
             if isFolder and ignoreFolders:
                 continue
 
@@ -347,23 +335,23 @@ def DoParse():
 
         ## print("path: ", directoryPath)
 
-        ## COMMENT
+        ## Gets the list of all music files and folders.
         musicList, playlistList = GetMusicFiles(directoryPath)
 
         ## print("fileList", fileList)
 
-        ## COMMENT
+        ## Constructs and writes our station's lua file, then uploads songs if needed.
         WriteStation(musicList, playlistList, stationName)
 
 def AskForUserHash(authAccepted, authRequired):
-    # Declared as global because i'm tired of arg hell
+    # Declared as global because this var gets carried through a ton of functions otherwise
     global userHash
     userHash = ""
 
     if authAccepted:
         print("---------------------------------")
 
-        ## COMMENT
+        ## Some hosts require a userhash token.
         if authRequired:
             print("Do you have a userhash? (This is required for your host!)")
         else:
@@ -371,7 +359,7 @@ def AskForUserHash(authAccepted, authRequired):
 
         userHash = input()
 
-        ## COMMENT
+        ## Keep asking for a userhash token if one is required.
         if userHash == "" and authRequired:
             AskForUserHash(authAccepted, authRequired)
 
@@ -379,10 +367,10 @@ def AskForUserHash(authAccepted, authRequired):
 
         print("userHash", userHash)
 
-        ## COMMENT
+        ## Start making our station file(s).
         DoParse()
     else:
-        ## COMMENT
+        ## Start making our station file(s).
         DoParse()
 
 def AskForOptions():
@@ -406,13 +394,15 @@ def AskForOptions():
         ## Clamps between min and max host to prevent out of range index.
         hostIndex = max(1, min(int(input("(x): ")), 4))
 
-        ## COMMENT
+        ## catbox.moe and qu.ax have an account system.
         authAccepted = hostIndex == 1 or hostIndex == 3
+
+        ## qu.ax requires an account to upload to
         authRequired = hostIndex == 3
 
         AskForUserHash(authAccepted, authRequired)
     else:
-        ## COMMENT
+        ## Start making our station file(s).
         DoParse()
 
 if __name__ == "__main__":

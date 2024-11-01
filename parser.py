@@ -215,7 +215,7 @@ def WriteSong(song, stationFile, stationName, doLocal=False, parent=None):
         stationFile.write(fileFormat.format(soundPath))
 
     if coverName is not None:
-        coverPath = os.path.join("materials", "cradio", "covers", coverName)
+        coverPath = os.path.join("cradio", "covers", coverName)
         coverPath = coverPath.replace(os.sep, '/')
 
         stationFile.write(coverFormat.format(coverPath))
@@ -299,13 +299,15 @@ stationFormat = 'local station = CRadio:Station("{0}")\n'
 iconFormat = 'station:SetIcon("{0}.png")\n\n'
 
 def WriteStation(fileList, playlistList, name="DefaultName"):
-    stationFile = io.open(name + ".lua", "w", encoding="utf-8")
+    fileName = re.sub(r'[^\w]', '', name).lower()
+
+    stationFile = io.open(fileName + ".lua", "w", encoding="utf-8")
     stationFile.write(startingLine)
     stationFile.write(stationFormat.format(name))
 
     name = name.lower()
 
-    iconPath = os.path.join("cradio", "stations", name.lower())
+    iconPath = os.path.join("cradio", "stations", fileName)
     iconPath = iconPath.replace(os.sep, '/')
 
     stationFile.write(iconFormat.format(iconPath))

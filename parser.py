@@ -146,7 +146,7 @@ def GetFileTags(file):
             ## Filters out dangerous characters before creating our path
             coverName = re.sub(r'[^\w]', '', mFile.artist + "_" + mFile.album).lower()
             folderPath = os.path.join("covers", "materials", "cradio", "covers")
-            coverPath = os.path.join("cradio", "covers", coverName + ".png")
+            coverPath = os.path.join(folderPath, coverName + ".png")
 
             ## If we have a cover we need to write the string to our lua file
             sCoverName = coverName + ".png"

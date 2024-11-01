@@ -143,8 +143,12 @@ def GetFileTags(file):
         image = mFile.get_image()
 
         if image is not None:
-            ## Filters out dangerous characters before creating our path
-            coverName = re.sub(r'[^\w]', '', mFile.artist + "_" + mFile.album).lower()
+            ## Filters out spaces before creating our path
+            coverName = re.sub(r'[^\w]', '', mFile.artist + "_" + mFile.album)
+            
+            ## Additionally filters out non-ASCII characters, as source doesn't like them.
+            coverName = re.sub(r'[^\x00-\x7F]+', '_', coverName).lower()
+
             folderPath = os.path.join("covers", "materials", "cradio", "covers")
             coverPath = os.path.join(folderPath, coverName + ".png")
 

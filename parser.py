@@ -97,20 +97,14 @@ class Parser:
 
         try:
             with io.open(path, "rb") as file:
-                ## print(userHash)
-
                 sizeLimit = self.UploaderLimits[self.UploaderIndex - 1]
 
                 if os.path.getsize(path) > sizeLimit:
                     return None
 
-                ## print("before post")
-
                 ## Start uploading our file, this is not done with another thread so each file must be uploaded one-by-one.
                 uploader = self.GetUploader()
                 response, url = uploader(file, path)
-
-                ## print("after post")
 
                 if response.status_code == 200:
                     print(self.UploadSuccessFormat.format(path))
@@ -259,19 +253,13 @@ class Station:
         try:
             self.DirectoryTree = os.listdir(self.Path)
 
-            ## print("fileNames: ", fileNames)
-
             for name in self.DirectoryTree:
                 _, fileType = os.path.splitext(name)
-                isFolder = os.path.isdir(name)
+                oPath = os.path.join(self.Path, name)
+                isFolder = os.path.isdir(oPath)
 
-                ## We don't want to include sub-playlists.
                 if not isFolder and fileType not in validFileTypes:
                     continue
-
-                oPath = os.path.join(self.Path, name)
-
-                ## print("songPath", songPath)
 
                 if isFolder:
                     subPlaylist = SubPlaylist(oPath, self)
@@ -296,8 +284,6 @@ class Station:
         if not songs and not subPlaylists:
             return False
 
-        ## print("fileList", fileList)
-
         name = self.GetName()
 
         with io.open(self.GetLuaPath(), "w", encoding="utf-8") as self.File:
@@ -312,6 +298,7 @@ class Station:
                 song.Write()
 
             for subPlaylist in subPlaylists:
+                print(subPlaylist)
                 subPlaylist.Write()
 
     def WriteIcon(self):
@@ -335,7 +322,7 @@ class Song:
         self.Parent = parent
 
     def __repr__(self):
-        return f'Song("{self.GetArtist()}"- "{self.GetName()}")'
+        return f'Song("{self.GetArtist()}" - "{self.GetName()}")'
 
     def __eq__(self, other): 
         if isinstance(other, Song) and other.Path == self.Path: 
@@ -406,7 +393,7 @@ class Song:
     
     def GetCoverPath(self):
         ## Filters out dangerous characters before joining our path
-        matPath = os.path.join("cradio", "covers", self.GetStation().GetSafeName(), self.GetCoverName() + ".png")
+        matPath = os.path.join("cradio", "covers", *self.GetSafeParentNames(), self.GetCoverName() + ".png")
         coverPath = os.path.join("cradio_covers", "materials", matPath)
 
         ## Source uses forward slashes, but some OSes will use backslashes.
@@ -537,8 +524,10 @@ class SubPlaylist:
 
         self.Parent = parent
 
+        self.FetchSongs()
+
     def __repr__(self):
-        return f'SubPlaylist("{self.Parent.GetName()}"- "{self.GetName()}")'
+        return f'SubPlaylist("{self.Parent.GetName()}" - "{self.GetName()}")'
 
     def __eq__(self, other): 
         if isinstance(other, Song) and other.Name == self.Name:
@@ -568,18 +557,17 @@ class SubPlaylist:
         self.Songs = []
 
         try:
+            self.DirectoryTree = os.listdir(self.Path)
+
             for name in self.DirectoryTree:
                 _, fileType = os.path.splitext(name)
+                oPath = os.path.join(self.Path, name)
 
                 ## We don't want to include sub-playlists.
-                if os.path.isdir(name) or fileType not in validFileTypes:
+                if os.path.isdir(oPath) or fileType not in validFileTypes:
                     continue
 
-                songPath = os.path.join(self.Path, name)
-
-                ## print("songPath", songPath)
-
-                song = Song(songPath, self)
+                song = Song(oPath, self)
 
                 self.Songs.append(song)
         except IOError:
@@ -588,23 +576,19 @@ class SubPlaylist:
         return self.Songs
 
     InfoLine = "\n---------------------------------\n-- {0} (Playlist)\n---------------------------------\n"
-    MainFormat = 'local {0}Playlist = CRadio:SubPlaylist("{0}")\n'
-    ParentFormat = '{0}Playlist:SetParent(station)\n\n'
+    MainFormat = 'local {0} = CRadio:SubPlaylist("{1}")\n'
+    ParentFormat = '{0}:SetParent(station)\n\n'
 
     def Write(self):
-        name = self.GetName()
+        name, var = self.GetName(), self.GetVar()
 
         stationFile = self.GetStation().GetFile()
         stationFile.write(self.InfoLine.format(name))
-        stationFile.write(self.MainFormat.format(name))
-        stationFile.write(self.ParentFormat.format(self.GetStation().GetVar()))
-
-        ## print("musicList: ", musicList)
+        stationFile.write(self.MainFormat.format(var, name))
+        stationFile.write(self.ParentFormat.format(var))
 
         for song in self.GetSongs():
-            ## print("subSong: ", song)
-
-            self.WriteSong(song)
+            song.Write()
 
 def AskForUserHash(hostIndex):
     ## catbox.moe and Monofile have an account system.

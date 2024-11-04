@@ -1,5 +1,5 @@
 # Standard libraries
-import io, os, sys, re
+import io, os, sys, re, shutil
 
 # Requests
 import requests
@@ -10,348 +10,608 @@ from tinytag import TinyTag
 # Pillow
 from PIL import Image
 
-successFormat = "Upload successful for file [{0}]!"
-failureFormat = "Upload failed for file [{0}], received response {1}!"
-exceptionFormat = "Upload failed for file [{0}], exception {1} raised!"
+cParser = None
 
-def DoCatboxUpload(file, path, userHash):
-    # -----------------------------9675585837039348863164086322
-    # Content-Disposition: form-data; name="reqtype"
+def SanitizeName(str):
+    ## Filters out spaces
+    str = re.sub(r'[^\w]', '_', str)
 
-    # fileupload
-    # -----------------------------9675585837039348863164086322
-    # Content-Disposition: form-data; name="userhash"
+    ## Additionally filters out non-ASCII characters, as source doesn't like them.
+    return re.sub(r'[^\x00-\x7F]+', '', str).lower()
 
-    # -----------------------------9675585837039348863164086322
-    # Content-Disposition: form-data; name="fileToUpload"; filename="the_stack.png"
-    # Content-Type: image/png
+class Parser:
+    def __init__(self, workFolder):
+        self.UploaderFuncs = [self.DoCatboxUpload, self.DoPomfUpload, self.DoPomfUpload, self.DoMonofileUpload]
+        self.UploaderIndex = None
 
-    _, fileType = os.path.splitext(path)
+        ## COMMENT
+        self.MainDir, self.MadeDirs = workFolder, False
 
-    files = {
-        'reqtype': (None, 'fileupload'),
-        'userhash': (None, userHash),
-        'fileToUpload': (f'file.{fileType[1:]}', file.read()),
+        self.FetchStations()
+
+    def GetMainDirectory(self):
+        return self.MainDir
+    
+    def GetStationsDirectory(self):
+        return os.path.join(self.GetMainDirectory(), "cradio_stations")
+    
+    def GetFilesDirectory(self):
+        return os.path.join(self.GetMainDirectory(), "cradio_songs", "sound", "cradio", "stations")
+
+    def GetUploader(self):
+        if not self.UploaderIndex:
+            return None
+
+        return self.UploaderFuncs[self.UploaderIndex - 1]
+
+    def SetUploader(self, index):
+        self.UploaderIndex = index
+
+    def GetUserHash(self):
+        return self.UserHash
+
+    def SetUserHash(self, userHash):
+        self.UserHash = userHash
+
+    def GetStations(self):
+        return self.Stations
+    
+    def FetchStations(self):
+        self.Stations = []
+
+        for i in range(1, len(sys.argv)):
+            folder = sys.argv[i]
+            station = Station(folder)
+
+            self.Stations.append(station)
+
+    def DoParse(self):
+        if not self.Stations:
+            print("No folders were input.")
+
+            return
+        
+        if not self.MadeDirs:
+            stationDirs = os.path.join(self.GetStationsDirectory(), "lua", "cradio", "shared", "stations")
+
+            os.makedirs(stationDirs, exist_ok=True)
+
+            if not self.GetUploader():
+                os.makedirs(self.GetFilesDirectory(), exist_ok=True)
+
+            self.MadeDirs = True
+        
+        for station in self.Stations:
+            station.Write()
+
+    UploadSuccessFormat = "Upload successful for file [{0}]!"
+    UploadFailureFormat = "Upload failed for file [{0}], received response {1}!"
+    UploadExceptionFormat = "Upload failed for file [{0}], {1}!"
+
+    ## In bytes
+    UploaderLimits = [200000000, 1000000000, 100000000, 754974700]
+
+    def UploadFile(self, path):
+        if not self.UploaderIndex:
+            return None
+
+        try:
+            with io.open(path, "rb") as file:
+                ## print(userHash)
+
+                sizeLimit = self.UploaderLimits[self.UploaderIndex - 1]
+
+                if os.path.getsize(path) > sizeLimit:
+                    return None
+
+                ## print("before post")
+
+                ## Start uploading our file, this is not done with another thread so each file must be uploaded one-by-one.
+                uploader = self.GetUploader()
+                response, url = uploader(file, path)
+
+                ## print("after post")
+
+                if response.status_code == 200:
+                    print(self.UploadSuccessFormat.format(path))
+                else:
+                    print(self.UploadFailureFormat.format(path, str(response.status_code)))
+
+                return url
+        except Exception as e:
+            print(self.UploadExceptionFormat.format(path, str(e)))
+
+    def DoCatboxUpload(self, file, path):
+        # -----------------------------9675585837039348863164086322
+        # Content-Disposition: form-data; name="fileToUpload"; filename="the_stack.png"
+        # Content-Type: image/png
+
+        _, fileType = os.path.splitext(path)
+
+        files = {
+            'reqtype': (None, 'fileupload'),
+            'userhash': (None, self.UserHash),
+            'fileToUpload': (f'file.{fileType[1:]}', file.read()),
+        }
+
+        response = requests.post("https://catbox.moe/user/api.php", files=files)
+
+        try:
+            return response, response.text
+        except:
+            return response, None
+
+    PomfHosts = {
+        1: "https://pomf.lain.la/upload.php",
+        2: "https://qu.ax/upload.php"
     }
 
-    response = requests.post("https://catbox.moe/user/api.php", files=files)
+    def DoPomfUpload(self, file, path):
+        # -----------------------------426483243616972780734144962905
+        # Content-Disposition: form-data; name="files[]"; filename="rain_temple.png"
+        # Content-Type: image/png
 
-    try:
-        return response, response.text
-    except:
-        return response, None
+        files = {
+            "files[]": (path, file.read())
+        }
 
-def DoPomfUpload(file, path, userHash):
-    # -----------------------------426483243616972780734144962905
-    # Content-Disposition: form-data; name="files[]"; filename="rain_temple.png"
-    # Content-Type: image/png
+        response = requests.post(self.PomfHosts[self.UploaderIndex - 1], files=files)
 
-    files = {
-        "files[]": (path, file.read())
-    }
+        try:
+            return response, response.json()["files"][0]["url"]
+        except:
+            return response, None
 
-    response = requests.post("https://pomf.lain.la/upload.php", files=files)
+    MonofileAuthFormat = "auth={0}"
+    MonofileURLFormat = "https://fyle.uk/download/{0}"
 
-    try:
-        return response, response.json()["files"][0]["url"]
-    except:
-        return response, None
+    def DoMonofileUpload(self, file, path):
+        # -----------------------------28294015417419468024143018187
+        # Content-Disposition: form-data; name="file"; filename="rain_temple.png"
+        # Content-Type: image/png
 
-def DoQuaxUpload(file, path, userHash):
-    # -----------------------------97370897018657600161858382728
-    # Content-Disposition: form-data; name="files[]"; filename="rain_temple.png"
-    # Content-Type: image/png
+        headers = {
+            "Cookie": self.MonofileAuthFormat.format(self.UserHash)
+        }
 
-    files = {
-        "files[]": (path, file.read())
-    }
+        files = {
+            "file": (path, file.read())
+        }
 
-    response = requests.post("https://qu.ax/upload.php", files=files)
+        response = requests.post("https://fyle.uk/upload", files=files, headers=headers)
 
-    try:
-        return response, response.json()["files"][0]["url"]
-    except:
-        return response, None
+        try:
+            return response, self.MonofileURLFormat.format(response.text)
+        except:
+            return response, None
 
-monoAuth = "auth={0}"
-monoUrl = "https://fyle.uk/download/{0}"
+validFileTypes = [".mp3", ".ogg", ".flac"]
 
-def DoMonofileUpload(file, path, userHash):
-    # -----------------------------28294015417419468024143018187
-    # Content-Disposition: form-data; name="file"; filename="rain_temple.png"
-    # Content-Type: image/png
+class Station:
+    def __init__(self, path):
+        self.Path = path
+        self.Name = os.path.basename(path)
 
-    headers = {
-        "Cookie": monoAuth.format(userHash)
-    }
+        ## Filters out dangerous characters
+        self.SafeName = SanitizeName(self.Name)
 
-    files = {
-        "file": (path, file.read())
-    }
+        self.FetchObjects()
 
-    response = requests.post("https://fyle.uk/upload", files=files, headers=headers)
+    def __repr__(self):
+        return f'Station("{self.Name}")'
 
-    try:
-        return response, monoUrl.format(response.text)
-    except:
-        return response, None
+    def __eq__(self, other): 
+        if isinstance(other, Station) and other.Name == self.Name: 
+            return True
 
-uploaderFuncs = [DoCatboxUpload, DoPomfUpload, DoQuaxUpload, DoMonofileUpload]
-
-## MiBs
-uploaderLimits = [200000000, 1000000000, 100000000, 754974700]
-
-def DoFileUpload(path):
-    try:
-        with io.open(path, "rb") as file:
-            ## print(userHash)
-
-            fileSize = os.path.getsize(path)
-
-            sizeLimit = uploaderLimits[hostIndex - 1]
-
-            if fileSize > sizeLimit:
-                return None
-
-            doUploadFunc = uploaderFuncs[hostIndex - 1]
-
-            ## print("before post")
-
-            ## Start uploading our file, this is not done with another thread so each file must be uploaded one-by-one.
-            response, url = doUploadFunc(file, path, userHash)
-
-            ## print("after post")
-
-            if response.status_code == 200:
-                print(successFormat.format(path))
-            else:
-                print(failureFormat.format(path, str(response.status_code)))
-
-            return url
-    except Exception as e:
-        print(exceptionFormat.format(path, str(e)))
-
-maxSize = [128, 128]
-
-def GetFileTags(file):
-    try:
-        print(file)
-
-        sCoverName = None
-
-        mFile = TinyTag.get(file, image=True)
-        image = mFile.get_image()
-
-        if image is not None:
-            ## Filters out spaces before creating our path
-            coverName = re.sub(r'[^\w]', '', mFile.artist + "_" + mFile.album)
-            
-            ## Additionally filters out non-ASCII characters, as source doesn't like them.
-            coverName = re.sub(r'[^\x00-\x7F]+', '_', coverName).lower()
-
-            folderPath = os.path.join("covers", "materials", "cradio", "covers")
-            coverPath = os.path.join(folderPath, coverName + ".png")
-
-            ## If we have a cover we need to write the string to our lua file
-            sCoverName = coverName + ".png"
-
-            ## If a cover has already been saved for this song, just reuse it.
-            if os.path.isfile(coverPath):
-                return mFile.title, mFile.artist, mFile.album, mFile.duration, sCoverName, os.path.basename(file)
-
-            ## Write our folder for covers if it doesn't exist
-            if not os.path.exists(folderPath):
-                os.makedirs(folderPath)
-
-            ## We have to open the image as bytes
-            imageBytes = io.BytesIO(image)
-
-            coverImage = Image.open(imageBytes)
-
-            ## Lanczos is the best algorithm for downscaling images, gmod's in-engine solution is terrible
-            coverImage.thumbnail(maxSize, Image.Resampling.LANCZOS)
-            coverImage.save(coverPath, "PNG")
-
-        return mFile.title, mFile.artist, mFile.album, mFile.duration, sCoverName, os.path.basename(file)
-    except TypeError:
-       print("Missing ID3 tags in ", file, ", skipping it.")
-
-       return None
-
-songLocalFormat = 'local song = CRadio:Song("{0}")\n'
-songFormat = 'song = CRadio:Song("{0}")\n'
-artistFormat = 'song:SetArtist("{0}")\n'
-releaseFormat = 'song:SetRelease("{0}")\n'
-lengthFormat = 'song:SetLength({0:.4f})\n'
-urlFormat = 'song:SetURL("{0}")\n'
-fileFormat = 'song:SetFile("{0}")\n'
-coverFormat = 'song:SetCover("{0}")\n'
-parentStr = "song:SetParent({0})\n"
-uploadFunc = None
-
-def WriteSong(song, stationFile, stationName, doLocal=False, parent=None):
-    songName, artist, release, length, coverName, file = GetFileTags(song)
-
-    if songName is None:
         return False
 
-    url = None
+    def GetName(self):
+        return self.Name
 
-    if hostIndex is not None:
-        url = DoFileUpload(song)
+    def GetSafeName(self):
+        return self.SafeName
 
-    firstLine = songFormat.format(songName)
+    def GetVar(self):
+        return "station"
 
-    if doLocal:
-        firstLine = "local " + firstLine
+    def GetFile(self):
+        return self.File
 
-    stationFile.write(firstLine)
-    stationFile.write(artistFormat.format(artist))
-    stationFile.write(releaseFormat.format(release))
-    stationFile.write(lengthFormat.format(length))
+    def GetLuaPath(self):
+        return os.path.join(cParser.GetStationsDirectory(), "lua", "cradio", "shared", "stations", self.GetSafeName() + ".lua")
 
-    if url is not None:
-        stationFile.write(urlFormat.format(url))
-    else:
-        soundPath = os.path.join("sound", "cradio", "stations", stationName, file)
-        soundPath = soundPath.replace(os.sep, '/')
+    def GetIcon(self):
+        for name in self.DirectoryTree:
+            _, fileType = os.path.splitext(name)
 
-        stationFile.write(fileFormat.format(soundPath))
+            if fileType == ".png":
+                return os.path.join(self.Path, name)
 
-    if coverName is not None:
-        coverPath = os.path.join("cradio", "covers", coverName)
-        coverPath = coverPath.replace(os.sep, '/')
+        return None
+    
+    def GetIconPath(self):
+        ## Filters out dangerous characters before joining our path
+        matPath = os.path.join("cradio", "stations", self.GetSafeName() + ".png")
+        filePath = os.path.join(cParser.GetStationsDirectory(), "materials", matPath)
 
-        stationFile.write(coverFormat.format(coverPath))
+        ## Source uses forward slashes, but some OSes will use backslashes.
+        if os.sep != '/':
+            matPath = matPath.replace(os.sep, '/')
 
-    if not parent:
-        parent = "station"
+        folderPath = os.path.dirname(filePath)
 
-    stationFile.write(parentStr.format(parent))
+        if not os.path.exists(folderPath):
+            os.makedirs(folderPath)
 
-    return True
+        return filePath, matPath
 
-audioFileTypes = [".mp3", ".ogg", ".flac"]
+    def GetSongs(self):
+        return self.Songs
+    
+    def GetSubPlaylists(self):
+        return self.SubPlaylists
 
-def GetMusicFiles(path, ignoreFolders=False):
-    try:
-        musicList = []
-        playlistList = []
-        fileNames = os.listdir(path)
+    def FetchObjects(self):
+        self.Songs = []
+        self.SubPlaylists = []
 
-        ## print("fileNames: ", fileNames)
+        try:
+            self.DirectoryTree = os.listdir(self.Path)
 
-        for fileName in fileNames:
-            _, fileType = os.path.splitext(fileName)
-            isFolder = os.path.exists(os.path.dirname(fileName))
+            ## print("fileNames: ", fileNames)
 
-            ## This is used for when we don't want to include sub-playlists.
-            if isFolder and ignoreFolders:
-                continue
+            for name in self.DirectoryTree:
+                _, fileType = os.path.splitext(name)
+                isFolder = os.path.isdir(name)
 
-            if not isFolder and fileType not in audioFileTypes:
-                continue
+                ## We don't want to include sub-playlists.
+                if not isFolder and fileType not in validFileTypes:
+                    continue
 
-            filePath = os.path.join(path, fileName)
+                oPath = os.path.join(self.Path, name)
 
-            ## print("filePath", filePath)
+                ## print("songPath", songPath)
 
-            if isFolder:
-                playlistList.insert(-1, filePath)
-            else:
-                musicList.insert(-1, filePath)
+                if isFolder:
+                    subPlaylist = SubPlaylist(oPath, self)
 
-        ## print(musicList)
+                    self.SubPlaylists.append(subPlaylist)
+                else:
+                    song = Song(oPath, self)
 
-        return musicList, playlistList
-    except:
-        print("Failed to open directory: ", path)
+                    self.Songs.append(song)
+        except IOError:
+            print("Failed to open directory: ", self.Path)
 
-        return [], []
+    StartingLine = "---------------------------------\n-- Station\n---------------------------------\n"
+    SongLine = "---------------------------------\n-- Songs\n---------------------------------\n"
+    StationFormat = 'local station = CRadio:Station("{0}")\n'
+    IconFormat = 'station:SetIcon("{0}")\n\n'
 
-subPlaylistLine = "\n---------------------------------\n-- {0} (Playlist)\n---------------------------------\n"
-subPlaylistFormat = 'local {0}Playlist = CRadio:SubPlaylist("{0}")\n'
-subParentFormat = '{0}Playlist:SetParent(station)\n\n'
-
-def WriteSubplaylist(subPlaylist, stationFile, stationName):
-    musicList, _ = GetMusicFiles(subPlaylist, True)
-    subPlaylistName = os.path.basename(subPlaylist)
-
-    stationFile.write(subPlaylistLine.format(subPlaylistName))
-    stationFile.write(subPlaylistFormat.format(subPlaylistName))
-    stationFile.write(subParentFormat.format(subPlaylistName))
-
-    parentName = subPlaylistName + "Playlist"
-    songCount = len(musicList)
-    currentIteration = 0
-
-    ## print("musicList: ", musicList)
-
-    for song in musicList:
-        ## print("subSong: ", song)
-        successful = WriteSong(song, stationFile, stationName, currentIteration == 0, parentName)
-
-        if currentIteration != songCount - 1:
-            stationFile.write("\n")
-
-        if successful:
-            currentIteration += 1
-
-startingLine = "---------------------------------\n-- Station\n---------------------------------\n"
-songLine = "---------------------------------\n-- Songs\n---------------------------------\n"
-stationFormat = 'local station = CRadio:Station("{0}")\n'
-iconFormat = 'station:SetIcon("{0}.png")\n\n'
-
-def WriteStation(fileList, playlistList, name="DefaultName"):
-    fileName = re.sub(r'[^\w]', '', name).lower()
-
-    stationFile = io.open(fileName + ".lua", "w", encoding="utf-8")
-    stationFile.write(startingLine)
-    stationFile.write(stationFormat.format(name))
-
-    name = name.lower()
-
-    iconPath = os.path.join("cradio", "stations", fileName)
-    iconPath = iconPath.replace(os.sep, '/')
-
-    stationFile.write(iconFormat.format(iconPath))
-    stationFile.write(songLine)
-
-    songCount = len(fileList)
-    currentIteration = 0
-
-    for song in fileList:
-        successful = WriteSong(song, stationFile, name, currentIteration == 0)
-
-        if currentIteration != songCount - 1:
-            stationFile.write("\n")
-
-        if successful:
-            currentIteration += 1
-
-    for subPlaylist in playlistList:
-        WriteSubplaylist(subPlaylist, stationFile, name)
-
-    stationFile.close()
-
-def DoParse():
-    for i in range(1, len(sys.argv)):
-        directoryPath = sys.argv[i]
-        stationName = os.path.basename(directoryPath)
-
-        ## print("path: ", directoryPath)
-
+    def Write(self):
         ## Gets the list of all music files and folders.
-        musicList, playlistList = GetMusicFiles(directoryPath)
+        songs, subPlaylists = self.GetSongs(), self.GetSubPlaylists()
+
+        if not songs and not subPlaylists:
+            return False
 
         ## print("fileList", fileList)
 
-        ## Constructs and writes our station's lua file, then uploads songs if needed.
-        WriteStation(musicList, playlistList, stationName)
+        name = self.GetName()
 
-def AskForUserHash(authAccepted, authRequired):
-    # Declared as global because this var gets carried through a ton of functions otherwise
-    global userHash
+        with io.open(self.GetLuaPath(), "w", encoding="utf-8") as self.File:
+            self.File.write(self.StartingLine)
+            self.File.write(self.StationFormat.format(name))
+
+            self.WriteIcon()
+
+            self.File.write(self.SongLine)
+
+            for song in songs:
+                song.Write()
+
+            for subPlaylist in subPlaylists:
+                subPlaylist.Write()
+
+    def WriteIcon(self):
+        icon = self.GetIcon()
+
+        if not icon:
+            return
+
+        destination, matPath = self.GetIconPath()
+
+        shutil.copyfile(icon, destination)
+
+        self.File.write(self.IconFormat.format(matPath))
+    
+class Song:
+    def __init__(self, path, parent):
+        self.Path = path
+        _, self.FileType = os.path.splitext(path)
+
+        self.URL = None
+        self.Parent = parent
+
+    def __repr__(self):
+        return f'Song("{self.GetArtist()}"- "{self.GetName()}")'
+
+    def __eq__(self, other): 
+        if isinstance(other, Song) and other.Path == self.Path: 
+            return True
+
+        return False
+
+    def GetName(self):
+        return self.GetTags().title
+    
+    def GetSafeName(self):
+        if not hasattr(self, 'SafeName'):
+            ## Filters out dangerous characters
+            self.SafeName = SanitizeName(self.GetName())
+
+        return self.SafeName
+
+    def GetSafeFileName(self):
+        if not hasattr(self, 'SafeFileName'):
+            ## Filters out dangerous characters
+            self.SafeFileName = SanitizeName(self.GetArtist() + '_' + self.GetName())
+
+        return self.SafeFileName
+    
+    def GetFileType(self):
+        return self.FileType
+    
+    def GetSafeParentNames(self):
+        if isinstance(self.Parent, Station):
+            return self.Parent.GetSafeName(), ""
+
+        return self.GetStation().GetSafeName(), self.Parent.GetSafeName()
+
+    def GetParent(self):
+        return self.Parent
+    
+    def GetStation(self):
+        if isinstance(self.Parent, Station):
+            return self.Parent
+        
+        return self.Parent.GetStation()
+
+    def GetArtist(self):
+        return self.GetTags().artist
+
+    def GetRelease(self):
+        return self.GetTags().album
+
+    def GetLength(self):
+        return round(self.GetTags().duration, 4)
+        
+    def GetCover(self):
+        if not hasattr(self, 'Cover'):
+            image = self.GetTags().get_image()
+
+            if image:
+                ## We have to open the image as bytes
+                self.Cover = Image.open(io.BytesIO(image))
+
+        return self.Cover
+    
+    def GetCoverName(self):
+        if not hasattr(self, 'SafeRelease'):
+            ## Filters out dangerous characters
+            self.SafeRelease = SanitizeName(self.GetArtist() + '_' + self.GetRelease())
+
+        return self.SafeRelease
+    
+    def GetCoverPath(self):
+        ## Filters out dangerous characters before joining our path
+        matPath = os.path.join("cradio", "covers", self.GetStation().GetSafeName(), self.GetCoverName() + ".png")
+        coverPath = os.path.join("cradio_covers", "materials", matPath)
+
+        ## Source uses forward slashes, but some OSes will use backslashes.
+        if os.sep != '/':
+            matPath = matPath.replace(os.sep, '/')
+
+        ## If a cover has already been saved for this song, just reuse it.
+        if os.path.isfile(coverPath):
+            return coverPath, matPath, True
+        
+        folderPath = os.path.dirname(coverPath)
+
+        if not os.path.exists(folderPath):
+            os.makedirs(folderPath)
+
+        return coverPath, matPath, False
+
+    def GetSoundPath(self):
+        ## Filters out dangerous characters before joining our path
+        soundPath = os.path.join("sound", "cradio", "stations", *self.GetSafeParentNames(), self.GetSafeFileName() + self.GetFileType())
+        filePath = os.path.join("cradio_songs", soundPath)
+
+        ## Source uses forward slashes, but some OSes will use backslashes.
+        if os.sep != '/':
+            soundPath = soundPath.replace(os.sep, '/')
+
+        folderPath = os.path.dirname(filePath)
+
+        if not os.path.exists(folderPath):
+            os.makedirs(folderPath)
+
+        return filePath, soundPath
+
+    def GetTags(self):
+        if hasattr(self, "Tags"):
+            return self.Tags
+
+        try:
+            self.Tags = TinyTag.get(self.Path, image=True)
+        except TypeError:
+            print("Missing ID3 tags in ", os.path.basename(self.Path), ", skipping it.")
+
+            return None
+
+        return self.Tags
+
+    MainFormat = 'local song = CRadio:Song("{0}")\n'
+    ArtistFormat = 'song:SetArtist("{0}")\n'
+    ReleaseFormat = 'song:SetRelease("{0}")\n'
+    LengthFormat = 'song:SetLength({0:.4f})\n'
+    ParentFormat = "song:SetParent({0})\n\n"
+
+    def Write(self):
+        name = self.GetName()
+
+        if not name:
+            return False
+        
+        print("Writing ", self.Path)
+
+        if cParser.GetUploader():
+            self.URL = cParser.UploadFile(self.Path)
+
+        stationFile = self.GetStation().GetFile()
+        stationFile.write(self.MainFormat.format(name))
+        stationFile.write(self.ArtistFormat.format(self.GetArtist()))
+
+        release = self.GetRelease()
+
+        ## Checks for self-titled releases
+        if name == release:
+            stationFile.write('song:SetRelease(true)\n')
+        else:
+            stationFile.write(self.ReleaseFormat.format(release))
+
+        stationFile.write(self.LengthFormat.format(self.GetLength()))
+
+        self.WriteAudio()
+        self.WriteCover()
+
+        parent = self.GetParent().GetVar()
+
+        stationFile.write(self.ParentFormat.format(parent))
+
+        return True
+
+    CoverFormat = 'song:SetCover("{0}")\n'
+    CoverSize = [128, 128]
+
+    def WriteCover(self):
+        path, matPath, alreadyPresent = self.GetCoverPath()
+
+        if not alreadyPresent:
+            image = self.GetCover()
+
+            if not image:
+                return
+
+            ## Lanczos is the best algorithm for downscaling images, gmod's in-engine solution is terrible
+            image.thumbnail(self.CoverSize, Image.Resampling.LANCZOS)
+            image.save(path, "PNG")
+
+        stationFile = self.GetStation().GetFile()
+        stationFile.write(self.CoverFormat.format(matPath))
+
+    URLFormat = 'song:SetURL("{0}")\n'
+    FileFormat = 'song:SetFile("{0}")\n'
+
+    def WriteAudio(self):
+        stationFile = self.GetStation().GetFile()
+
+        if self.URL:
+            stationFile.write(self.URLFormat.format(self.URL))
+
+            return
+
+        destination, soundPath = self.GetSoundPath()
+
+        shutil.copyfile(self.Path, destination)
+
+        stationFile.write(self.FileFormat.format(soundPath))
+    
+class SubPlaylist:
+    def __init__(self, path, parent):
+        self.Path = path
+        self.Name = os.path.basename(path)
+        self.SafeName = SanitizeName(self.Name)
+
+        self.Parent = parent
+
+    def __repr__(self):
+        return f'SubPlaylist("{self.Parent.GetName()}"- "{self.GetName()}")'
+
+    def __eq__(self, other): 
+        if isinstance(other, Song) and other.Name == self.Name:
+            return True
+
+        return False
+
+    def GetName(self):
+        return self.Name
+
+    def GetSafeName(self):
+        return self.SafeName
+    
+    def GetParent(self):
+        return self.Parent
+    
+    def GetStation(self):
+        return self.Parent
+    
+    def GetVar(self):
+        return self.GetSafeName() + "Playlist"
+
+    def GetSongs(self):
+        return self.Songs
+    
+    def FetchSongs(self):
+        self.Songs = []
+
+        try:
+            for name in self.DirectoryTree:
+                _, fileType = os.path.splitext(name)
+
+                ## We don't want to include sub-playlists.
+                if os.path.isdir(name) or fileType not in validFileTypes:
+                    continue
+
+                songPath = os.path.join(self.Path, name)
+
+                ## print("songPath", songPath)
+
+                song = Song(songPath, self)
+
+                self.Songs.append(song)
+        except IOError:
+            print("Failed to open directory: ", self.Path)
+
+        return self.Songs
+
+    InfoLine = "\n---------------------------------\n-- {0} (Playlist)\n---------------------------------\n"
+    MainFormat = 'local {0}Playlist = CRadio:SubPlaylist("{0}")\n'
+    ParentFormat = '{0}Playlist:SetParent(station)\n\n'
+
+    def Write(self):
+        name = self.GetName()
+
+        stationFile = self.GetStation().GetFile()
+        stationFile.write(self.InfoLine.format(name))
+        stationFile.write(self.MainFormat.format(name))
+        stationFile.write(self.ParentFormat.format(self.GetStation().GetVar()))
+
+        ## print("musicList: ", musicList)
+
+        for song in self.GetSongs():
+            ## print("subSong: ", song)
+
+            self.WriteSong(song)
+
+def AskForUserHash(hostIndex):
+    ## catbox.moe and Monofile have an account system.
+    authAccepted = hostIndex == 1 or hostIndex == 3
+
+    ## Monofile requires an account to upload to
+    authRequired = hostIndex == 3
     userHash = ""
 
     if authAccepted:
@@ -367,22 +627,23 @@ def AskForUserHash(authAccepted, authRequired):
 
         ## Keep asking for a userhash token if one is required.
         if userHash == "" and authRequired:
-            AskForUserHash(authAccepted, authRequired)
+            AskForUserHash(hostIndex)
 
             return
+        
+        cParser.SetUserHash(userHash)
 
         print("userHash", userHash)
 
         ## Start making our station file(s).
-        DoParse()
+        cParser.DoParse()
     else:
         ## Start making our station file(s).
-        DoParse()
+        cParser.DoParse()
 
-def AskForOptions():
-    # Declare hostIndex as global
-    global hostIndex
-    hostIndex = None
+if __name__ == "__main__":
+    workDir = os.path.dirname(os.path.abspath(__file__))
+    cParser = Parser(workDir)
 
     print("---------------------------------")
     print("Do you want to upload these files onto a host?")
@@ -399,17 +660,9 @@ def AskForOptions():
 
         ## Clamps between min and max host to prevent out of range index.
         hostIndex = max(1, min(int(input("(x): ")), 4))
+        cParser.SetUploader(hostIndex)
 
-        ## catbox.moe and qu.ax have an account system.
-        authAccepted = hostIndex == 1 or hostIndex == 3
-
-        ## qu.ax requires an account to upload to
-        authRequired = hostIndex == 3
-
-        AskForUserHash(authAccepted, authRequired)
+        AskForUserHash(hostIndex)
     else:
         ## Start making our station file(s).
-        DoParse()
-
-if __name__ == "__main__":
-    AskForOptions()
+        cParser.DoParse()

@@ -272,10 +272,12 @@ class Station:
         except IOError:
             print("Failed to open directory: ", self.Path)
 
-    StartingLine = "---------------------------------\n-- Station\n---------------------------------\n"
-    SongLine = "---------------------------------\n-- Songs\n---------------------------------\n"
-    StationFormat = 'local station = CRadio:Station("{0}")\n'
-    IconFormat = 'station:SetIcon("{0}")\n\n'
+    WriteFormat = '''---------------------------------\n-- Station\n---------------------------------
+local station = CRadio:Station("{0}", {{
+    {1}
+}})
+
+---------------------------------\n-- Songs\n---------------------------------\n'''
 
     def Write(self):
         ## Gets the list of all music files and folders.
@@ -287,18 +289,23 @@ class Station:
         name = self.GetName()
 
         with io.open(self.GetLuaPath(), "w", encoding="utf-8") as self.File:
-            self.File.write(self.StartingLine)
-            self.File.write(self.StationFormat.format(name))
+            iconPath = self.WriteIcon()
+            content = self.WriteFormat.format(
+                name,
+                f'Icon = "{iconPath}"' if iconPath else ''
+            )
 
-            self.WriteIcon()
+            ## We remove empty lines this way.
+            content = content.replace('\n    \n', '\n')
 
-            self.File.write(self.SongLine)
+            self.File.write(content)
 
             for song in songs:
                 song.Write()
 
             for subPlaylist in subPlaylists:
                 print(subPlaylist)
+
                 subPlaylist.Write()
 
     def WriteIcon(self):
@@ -311,7 +318,7 @@ class Station:
 
         shutil.copyfile(icon, destination)
 
-        self.File.write(self.IconFormat.format(matPath))
+        return matPath
     
 class Song:
     def __init__(self, path, parent):
@@ -320,6 +327,8 @@ class Song:
 
         self.URL = None
         self.Parent = parent
+
+        self.CoverWritten = False
 
     def __repr__(self):
         return f'Song("{self.GetArtist()}" - "{self.GetName()}")'
@@ -375,14 +384,11 @@ class Song:
         return round(self.GetTags().duration, 4)
         
     def GetCover(self):
-        if not hasattr(self, 'Cover'):
-            image = self.GetTags().get_image()
+        image = self.GetTags().get_image()
 
-            if image:
-                ## We have to open the image as bytes
-                self.Cover = Image.open(io.BytesIO(image))
-
-        return self.Cover
+        if image:
+            ## We have to open the image as bytes
+            return Image.open(io.BytesIO(image))
     
     def GetCoverName(self):
         if not hasattr(self, 'SafeRelease'):
@@ -440,11 +446,14 @@ class Song:
 
         return self.Tags
 
-    MainFormat = 'local song = CRadio:Song("{0}")\n'
-    ArtistFormat = 'song:SetArtist("{0}")\n'
-    ReleaseFormat = 'song:SetRelease("{0}")\n'
-    LengthFormat = 'song:SetLength({0:.4f})\n'
-    ParentFormat = "song:SetParent({0})\n\n"
+    WriteFormat = '''CRadio:Song("{0}", {{
+    Artist = "{1}",
+    {2},
+    Length = {3:.4f},
+    {4},
+    {5}
+    Parent = {6}
+}})\n\n'''
 
     def Write(self):
         name = self.GetName()
@@ -457,26 +466,26 @@ class Song:
         if cParser.GetUploader():
             self.URL = cParser.UploadFile(self.Path)
 
-        stationFile = self.GetStation().GetFile()
-        stationFile.write(self.MainFormat.format(name))
-        stationFile.write(self.ArtistFormat.format(self.GetArtist()))
-
         release = self.GetRelease()
+        soundPath, coverPath = self.WriteAudio(), self.WriteCover()
+        content = self.WriteFormat.format(
+            name,
+            self.GetArtist(),
+            ## Checks for self-titled releases
+            'Release = "true"' if name == release else f'Release = "{release}"',
+            self.GetLength(),
+            f'URL = "{self.URL}"' if self.URL else f'File = "{soundPath}"',
+            f'Cover = "{coverPath}",' if self.CoverWritten else '',
+            self.GetParent().GetVar()
+        )
 
-        ## Checks for self-titled releases
-        if name == release:
-            stationFile.write('song:SetRelease(true)\n')
-        else:
-            stationFile.write(self.ReleaseFormat.format(release))
+        print(self.CoverWritten)
 
-        stationFile.write(self.LengthFormat.format(self.GetLength()))
+        ## We remove empty lines this way.
+        content = content.replace('\n    \n', '\n')
 
-        self.WriteAudio()
-        self.WriteCover()
-
-        parent = self.GetParent().GetVar()
-
-        stationFile.write(self.ParentFormat.format(parent))
+        stationFile = self.GetStation().GetFile()
+        stationFile.write(content)
 
         return True
 
@@ -484,9 +493,9 @@ class Song:
     CoverSize = [128, 128]
 
     def WriteCover(self):
-        path, matPath, alreadyPresent = self.GetCoverPath()
+        path, matPath, self.CoverWritten = self.GetCoverPath()
 
-        if not alreadyPresent:
+        if not self.CoverWritten:
             image = self.GetCover()
 
             if not image:
@@ -495,26 +504,24 @@ class Song:
             ## Lanczos is the best algorithm for downscaling images, gmod's in-engine solution is terrible
             image.thumbnail(self.CoverSize, Image.Resampling.LANCZOS)
             image.save(path, "PNG")
+            image.close()
 
-        stationFile = self.GetStation().GetFile()
-        stationFile.write(self.CoverFormat.format(matPath))
+            self.CoverWritten = True
+
+        return matPath
 
     URLFormat = 'song:SetURL("{0}")\n'
     FileFormat = 'song:SetFile("{0}")\n'
 
     def WriteAudio(self):
-        stationFile = self.GetStation().GetFile()
-
         if self.URL:
-            stationFile.write(self.URLFormat.format(self.URL))
-
             return
 
         destination, soundPath = self.GetSoundPath()
 
         shutil.copyfile(self.Path, destination)
 
-        stationFile.write(self.FileFormat.format(soundPath))
+        return soundPath
     
 class SubPlaylist:
     def __init__(self, path, parent):
@@ -578,14 +585,18 @@ class SubPlaylist:
     InfoLine = "\n---------------------------------\n-- {0} (Playlist)\n---------------------------------\n"
     MainFormat = 'local {0} = CRadio:SubPlaylist("{1}")\n'
     ParentFormat = '{0}:SetParent(station)\n\n'
+    WriteFormat = '''---------------------------------------------\n-- {1} (Playlist)\n---------------------------------------------\n
+local {0} = CRadio:SubPlaylist("{1}", {{
+    Parent = {2}
+}})\n\n'''
 
     def Write(self):
-        name, var = self.GetName(), self.GetVar()
-
         stationFile = self.GetStation().GetFile()
-        stationFile.write(self.InfoLine.format(name))
-        stationFile.write(self.MainFormat.format(var, name))
-        stationFile.write(self.ParentFormat.format(var))
+        stationFile.write(self.WriteFormat.format(
+            self.GetVar(),
+            self.GetName(),
+            self.GetStation().GetVar()
+        ))
 
         for song in self.GetSongs():
             song.Write()

@@ -377,6 +377,9 @@ class Song:
     def GetArtist(self):
         return self.GetTags().artist
 
+    def GetAlbumArtist(self):
+        return self.GetTags().albumartist
+
     def GetRelease(self):
         return self.GetTags().album
 
@@ -393,7 +396,7 @@ class Song:
     def GetCoverName(self):
         if not hasattr(self, 'SafeRelease'):
             ## Filters out dangerous characters
-            self.SafeRelease = SanitizeName(self.GetArtist() + '_' + self.GetRelease())
+            self.SafeRelease = SanitizeName(self.GetAlbumArtist() + '_' + self.GetRelease())
 
         return self.SafeRelease
     
@@ -449,7 +452,7 @@ class Song:
     WriteFormat = '''CRadio:Song("{0}", {{
     Artist = "{1}",
     {2},
-    Length = {3:.4f},
+    Length = {3:.3f},
     {4},
     {5}
     Parent = {6}

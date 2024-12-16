@@ -304,8 +304,6 @@ local station = CRadio:Station("{0}", {{
                 song.Write()
 
             for subPlaylist in subPlaylists:
-                print(subPlaylist)
-
                 subPlaylist.Write()
 
     def WriteIcon(self):
@@ -420,7 +418,7 @@ class Song:
 
         return coverPath, matPath, False
 
-    def GetSoundPath(self):
+    def GetSoundPath(self, shouldMakeFolder=True):
         ## Filters out dangerous characters before joining our path
         soundPath = os.path.join("sound", "cradio", "stations", *self.GetSafeParentNames(), self.GetSafeFileName() + self.GetFileType())
         filePath = os.path.join("cradio_songs", soundPath)
@@ -428,6 +426,9 @@ class Song:
         ## Source uses forward slashes, but some OSes will use backslashes.
         if os.sep != '/':
             soundPath = soundPath.replace(os.sep, '/')
+
+        if not shouldMakeFolder:
+            return filePath, soundPath
 
         folderPath = os.path.dirname(filePath)
 
@@ -455,7 +456,8 @@ class Song:
     Length = {3:.3f},
     {4},
     {5}
-    Parent = {6}
+    {6}
+    Parent = {7}
 }})\n\n'''
 
     def Write(self):
@@ -477,12 +479,11 @@ class Song:
             ## Checks for self-titled releases
             'Release = "true"' if name == release else f'Release = "{release}"',
             self.GetLength(),
-            f'URL = "{self.URL}"' if self.URL else f'File = "{soundPath}"',
+            f'File = "{soundPath}"',
+            f'URL = "{self.URL}",' if self.URL else '',
             f'Cover = "{coverPath}",' if self.CoverWritten else '',
             self.GetParent().GetVar()
         )
-
-        print(self.CoverWritten)
 
         ## We remove empty lines this way.
         content = content.replace('\n    \n', '\n')
@@ -517,12 +518,10 @@ class Song:
     FileFormat = 'song:SetFile("{0}")\n'
 
     def WriteAudio(self):
-        if self.URL:
-            return
+        destination, soundPath = self.GetSoundPath(not self.URL)
 
-        destination, soundPath = self.GetSoundPath()
-
-        shutil.copyfile(self.Path, destination)
+        if not self.URL:
+            shutil.copyfile(self.Path, destination)
 
         return soundPath
     

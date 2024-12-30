@@ -5,7 +5,7 @@ import io, os, sys, re, shutil
 import requests
 
 # Tinytag
-from tinytag import TinyTag
+from tinytag import Image as TImage, TinyTag
 
 # Pillow
 from PIL import Image
@@ -385,7 +385,7 @@ class Song:
         return round(self.GetTags().duration, 4)
         
     def GetCover(self):
-        image = self.GetTags().get_image()
+        image: TImage | None = self.GetTags().images.any
 
         if image:
             ## We have to open the image as bytes

@@ -389,7 +389,7 @@ class Song:
 
         if image:
             ## We have to open the image as bytes
-            return Image.open(io.BytesIO(image))
+            return Image.open(io.BytesIO(image.data))
     
     def GetCoverName(self):
         if not hasattr(self, 'SafeRelease'):

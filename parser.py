@@ -477,7 +477,7 @@ class Song:
             name,
             self.GetArtist(),
             ## Checks for self-titled releases
-            'Release = true' if name == release else f'Release = "{release}"',
+            'Release = "true"' if name == release else f'Release = "{release}"',
             self.GetLength(),
             f'File = "{soundPath}"',
             f'URL = "{self.URL}",' if self.URL else '',
